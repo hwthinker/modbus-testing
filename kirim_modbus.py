@@ -1,45 +1,58 @@
 import sys
 import serial
 
+def calculate_crc(data):
+    crc = 0xFFFF
+    for b in data:
+        crc ^= b
+        for _ in range(8):
+            if (crc & 0x0001):
+                crc = (crc >> 1) ^ 0xA001
+            else:
+                crc >>= 1
+    return crc.to_bytes(2, byteorder='little')  # LSB first
+
 def print_bit_status(label, byte_val):
     for i in range(8):
         bit = (byte_val >> i) & 0x01
         print(f"  {label} {i+1}: {'ON' if bit else 'OFF'}")
 
-# Cek argumen minimal
-if len(sys.argv) < 3:
-    print("Usage:")
-    print("  python kirim_modbus.py COMx [baudrate] HEX1 HEX2 ...")
-    print("Contoh:")
-    print("  python kirim_modbus.py COM3 9600 FF 01 00 00 00 08 28 12")
-    print("  python kirim_modbus.py COM3 FF 01 00 00 00 08 28 12  (default baudrate 9600)")
+if len(sys.argv) < 5:
+    print("Penggunaan:")
+    print("  python kirim_modbus.py -r COMx [baudrate] HEX1 HEX2 ...  # manual CRC")
+    print("  python kirim_modbus.py -a COMx [baudrate] HEX1 HEX2 ...  # auto CRC")
     sys.exit(1)
 
-# Default baudrate
-baudrate = 9600
+mode = sys.argv[1]
+port = sys.argv[2]
 
-# Parsing argumen
 try:
-    int(sys.argv[2])
-    port = sys.argv[1]
-    baudrate = int(sys.argv[2])
-    hex_values = sys.argv[3:]
+    baudrate = int(sys.argv[3])
+    hex_values = sys.argv[4:]
 except ValueError:
-    port = sys.argv[1]
-    hex_values = sys.argv[2:]
-
-# Konversi HEX ke bytes
-try:
-    byte_data = bytes(int(h, 16) for h in hex_values)
-except ValueError:
-    print("❌ Error: HEX tidak valid.")
+    print("❌ Error: Baudrate harus berupa angka.")
     sys.exit(1)
 
-# Kirim dan baca
+# Ubah HEX ke bytes
+try:
+    data = bytearray(int(h, 16) for h in hex_values)
+except ValueError:
+    print("❌ Error: Input HEX tidak valid.")
+    sys.exit(1)
+
+# Tambah CRC jika -a
+if mode == '-a':
+    crc = calculate_crc(data)
+    data += crc
+
+elif mode != '-r':
+    print("❌ Error: Mode harus -a (auto CRC) atau -r (raw/manual CRC).")
+    sys.exit(1)
+
 try:
     ser = serial.Serial(port, baudrate, timeout=1)
-    ser.write(byte_data)
-    print(f"[TX] {' '.join(hex_values)}")
+    ser.write(data)
+    print(f"[TX] {' '.join(f'{b:02X}' for b in data)}")
 
     response = ser.read(8)
     ser.close()
@@ -48,30 +61,22 @@ try:
         hex_resp = ' '.join(f"{b:02X}" for b in response)
         print(f"[RX] {hex_resp}")
 
-        # Deteksi berdasarkan fungsi
         if len(response) >= 4:
-            slave_addr = response[0]
-            func_code = response[1]
+            slave = response[0]
+            function = response[1]
 
-            if func_code == 0x01:
+            if function == 0x01:
                 print("Status Relay:")
                 print_bit_status("Relay", response[3])
-
-            elif func_code == 0x02:
+            elif function == 0x02:
                 print("Status Input Optocoupler:")
                 print_bit_status("Input", response[3])
-
-            elif func_code == 0x03 and len(response) >= 5:
-                slave_id = response[4]
-                print(f"Alamat Slave ID: {slave_id} (0x{slave_id:02X})")
-
+            elif function == 0x03 and len(response) >= 5:
+                print(f"Alamat Slave ID: {response[4]} (0x{response[4]:02X})")
     else:
         print("⚠️ Tidak ada respon dari perangkat.")
 
 except serial.SerialException as e:
     print(f"⚠️ Gagal membuka port {port}: {e}")
     if "The parameter is incorrect" in str(e):
-        print("💡 Kemungkinan penyebab:")
-        print("   - Kamu lupa menuliskan baudrate dan byte pertama adalah angka (misalnya '00')")
-        print("   - Port COM tidak tersedia / sedang dipakai program lain")
-        print("   - Nama port salah (misal 'COM33' padahal tidak ada)")
+        print("💡 Mungkin kamu lupa nulis baudrate atau port salah / sedang dipakai.")
