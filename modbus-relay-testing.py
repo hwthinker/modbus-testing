@@ -3,6 +3,95 @@ import serial
 import time
 import serial.tools.list_ports  # Import untuk deteksi port serial
 
+def check_relay_status(port, baudrate, slave_id):
+    """Fungsi untuk membaca status relay dengan format sederhana"""
+    try:
+        # Handle berbagai format slave ID
+        if slave_id.startswith('0x'):
+            slave_id_hex = int(slave_id, 16)
+        elif all(c in '0123456789ABCDEFabcdef' for c in slave_id):
+            slave_id_hex = int(slave_id, 16)
+        else:
+            slave_id_hex = int(slave_id)
+            
+        if not (0 <= slave_id_hex <= 255):
+            raise ValueError("Slave ID harus antara 0-255")
+    except ValueError:
+        print("❌ Error: Slave ID tidak valid. Harus antara 0-255 atau format hex (misal: FF, 0FF, 0xFF)")
+        sys.exit(1)
+
+    # Format payload Modbus untuk membaca relay (Function Code 0x01)
+    payload = bytearray([slave_id_hex, 0x01, 0x00, 0x00, 0x00, 0x08])
+    crc = calculate_crc(payload)
+    payload += crc
+    
+    try:
+        ser = serial.Serial(port, baudrate, timeout=1)
+        ser.write(payload)
+        print(f"[TX] {' '.join(f'{b:02X}' for b in payload)}")
+        response = ser.read(8)
+        ser.close()
+        
+        if response:
+            print(f"[RX] {' '.join(f'{b:02X}' for b in response)}")
+            if len(response) >= 4 and response[1] == 0x01:
+                print("\nStatus Relay:")
+                print_bit_status("Relay ", response[3])
+            else:
+                print("⚠️ Format respons tidak valid untuk pengecekan relay")
+        else:
+            print("⚠️ Tidak ada respon dari perangkat.")
+    except serial.SerialException as e:
+        print(f"⚠️ Gagal membuka port {port}: {e}")
+        if "The parameter is incorrect" in str(e):
+            print("💡 Mungkin port salah atau sedang dipakai.")
+
+def check_input_status(port, baudrate, slave_id):
+    """Fungsi baru untuk mengecek status input dengan format yang lebih sederhana"""
+    try:
+        # Handle berbagai format slave ID:
+        if slave_id.startswith('0x'):
+            # Format 0xFF
+            slave_id_hex = int(slave_id, 16)
+        elif all(c in '0123456789ABCDEFabcdef' for c in slave_id):
+            # Format FF (hex tanpa prefix)
+            slave_id_hex = int(slave_id, 16)
+        else:
+            # Format decimal
+            slave_id_hex = int(slave_id)
+            
+        if not (0 <= slave_id_hex <= 255):
+            raise ValueError("Slave ID harus antara 0-255")
+    except ValueError:
+        print("❌ Error: Slave ID tidak valid. Harus antara 0-255 atau format hex (misal: FF, 0FF, 0xFF)")
+        sys.exit(1)
+
+    # Format payload Modbus untuk membaca input (Function Code 0x02)
+    payload = bytearray([slave_id_hex, 0x02, 0x00, 0x00, 0x00, 0x08])
+    crc = calculate_crc(payload)
+    payload += crc
+    
+    try:
+        ser = serial.Serial(port, baudrate, timeout=1)
+        ser.write(payload)
+        print(f"[TX] {' '.join(f'{b:02X}' for b in payload)}")
+        response = ser.read(8)
+        ser.close()
+        
+        if response:
+            print(f"[RX] {' '.join(f'{b:02X}' for b in response)}")
+            if len(response) >= 4 and response[1] == 0x02:
+                print("\nStatus Input Optocoupler:")
+                print_bit_status("Input", response[3])
+            else:
+                print("⚠️ Format respons tidak valid untuk pengecekan input")
+        else:
+            print("⚠️ Tidak ada respon dari perangkat.")
+    except serial.SerialException as e:
+        print(f"⚠️ Gagal membuka port {port}: {e}")
+        if "The parameter is incorrect" in str(e):
+            print("💡 Mungkin port salah atau sedang dipakai.")
+
 def calculate_crc(data):
     crc = 0xFFFF
     for b in data:
@@ -15,9 +104,11 @@ def calculate_crc(data):
     return crc.to_bytes(2, byteorder='little')  # LSB first
 
 def print_bit_status(label, byte_val):
+    """Fungsi modifikasi untuk menampilkan status dengan emoji dan alignment rapi"""
     for i in range(8):
         bit = (byte_val >> i) & 0x01
-        print(f"  {label} {i+1}: {'ON' if bit else 'OFF'}")
+        status = "ON  🟢" if bit else "OFF 🔴"  # Tambah spasi ekstra setelah ON
+        print(f"  {label}{i+1}: {status}")
 
 def detect_serial_ports():
     """Mendeteksi semua port serial yang tersedia"""
@@ -138,7 +229,8 @@ if len(sys.argv) < 2:
     print("  python kirim_modbus.py -a COMx [baudrate] HEX1 HEX2 ...  # auto CRC")
     print("  python kirim_modbus.py -t COMx [baudrate] [slave_id_hex] -b [4/8]  # test relay")
     print("  python kirim_modbus.py -s COMx [baudrate] [slave_id_hex]  # set slave address")
-    print("  python kirim_modbus.py -c COMx [baudrate]  # cek slave ID")
+    print("  python kirim_modbus.py -c COMx [baudrate]  # cek slave ID_hex")
+    print("  python kirim_modbus.py -i COMx [baudrate] [slave_id_hex] # cek Status Input")
     print("  python kirim_modbus.py -d  # deteksi port serial yang tersedia")
     sys.exit(1)
 
@@ -155,6 +247,36 @@ if len(sys.argv) < 3:
     sys.exit(1)
 
 port = sys.argv[2]
+
+if mode == '-b':
+    if len(sys.argv) != 5:
+        print("❌ Error: Format baca relay salah. Contoh: python kirim_modbus.py -b COM3 9600 FF")
+        print("          atau: python kirim_modbus.py -b COM3 9600 1")
+        sys.exit(1)
+    try:
+        port = sys.argv[2]
+        baudrate = int(sys.argv[3])
+        slave_id = sys.argv[4]
+        check_relay_status(port, baudrate, slave_id)
+        sys.exit(0)
+    except ValueError:
+        print("❌ Error: Baudrate harus berupa angka.")
+        sys.exit(1)
+
+if mode == '-i':
+    if len(sys.argv) != 5:
+        print("❌ Error: Format cek input salah. Contoh: python kirim_modbus.py -i COM3 9600 FF")
+        print("          atau: python kirim_modbus.py -i COM3 9600 1")
+        sys.exit(1)
+    try:
+        port = sys.argv[2]
+        baudrate = int(sys.argv[3])
+        slave_id = sys.argv[4]
+        check_input_status(port, baudrate, slave_id)
+        sys.exit(0)
+    except ValueError:
+        print("❌ Error: Baudrate harus berupa angka.")
+        sys.exit(1)
 
 # Tambahan untuk opsi -c (cek slave ID)
 if mode == '-c':
@@ -235,7 +357,7 @@ try:
             function = response[1]
 
             if function == 0x01:
-                print("Status Relay:")
+                print("Status Relay: bb ")
                 print_bit_status("Relay", response[3])
             elif function == 0x02:
                 print("Status Input Optocoupler:")
