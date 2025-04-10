@@ -284,23 +284,44 @@ def set_slave_id(port, baudrate, new_slave_id):
         if "The parameter is incorrect" in str(e):
             print("💡 Mungkin kamu lupa nulis baudrate atau port salah / sedang dipakai.")
 
+# Ganti semua opsi di bagian parser argumen dengan:
 if len(sys.argv) < 2:
     print("Penggunaan:")
-    print("  python kirim_modbus.py -r COMx [baudrate] HEX1 HEX2 ...  # manual CRC")
-    print("  python kirim_modbus.py -a COMx [baudrate] HEX1 HEX2 ...  # auto CRC")
-    print("  python kirim_modbus.py -t COMx [baudrate] [slave_id_hex] -b [4/8]  # test relay")
-    print("  python kirim_modbus.py -s COMx [baudrate] [slave_id_hex]  # set slave address")
-    print("  python kirim_modbus.py -c COMx [baudrate]  # cek slave ID_hex")
-    print("  python kirim_modbus.py -i COMx [baudrate] [slave_id_hex] # cek Status Input")
-    print("  python kirim_modbus.py -f COMx [baudrate] [slave_id_hex] # Feedbcak Status Relay")
-    print("  python kirim_modbus.py -m COMx [baudrate] [slave_id_hex] [Channel_rly] [0/1] # ON/OFF Relay per channel")
-    print("  python kirim_modbus.py -d  # deteksi port serial yang tersedia")
+    print("  MODBUS Relay Controller")
+    print("  Format umum: python kirim_modbus.py [OPTION] [PARAMETERS]")
+    print("\nOpsi utama (MODBUS):")
+    print("  -M atau --manual HEX1 HEX2 ...  # Kirim perintah manual (raw)")
+    print("  -O atau --auto HEX1 HEX2 ...   # Kirim perintah dengan auto CRC")
+    print("  -D atau --detect               # Deteksi port serial")
+    print("  -B atau --relay-status         # Baca status relay")
+    print("  -U atau --input-status         # Baca status input")
+    print("  -S atau --set-slave            # Set slave address")
+    print("  -C atau --check-slave          # Cek slave ID")
+    print("  -T atau --test-relay           # Test relay otomatis")
+    print("  -R atau --relay-control      # Kontrol relay per channel")
+    print("\nContoh:")
+    print("  python kirim_modbus.py -M COM3 9600 FF     #  Kirim perintah manual")
+    print("  python kirim_modbus.py -O COM3 9600 FF     # Kirim perintah dengan auto CRC")
+    print("  python kirim_modbus.py -D COM3 9600        # Cek Alamat Modbus Slave")
+    print("  python kirim_modbus.py -B COM3 9600 FF     # Baca relay (Slave ID 255)")
+    print("  python kirim_modbus.py -U COM3 9600 FF     # Baca input (Slave ID 255)")
+    print("  python kirim_modbus.py -S COM3 9600 FF     # Set slave ID ke 255")
+    print("  python kirim_modbus.py -C COM3 9600        # Cek Set slave ID ")
+    print("  python kirim_modbus.py -T COM3 9600 FF -b 4 # Run Relay (Slave ID 255) B 4")
+             
+    print("\nContoh kontrol relay:")
+    print("  python kirim_modbus.py -R COM3 9600 FF 1 1    # Relay 1 ON (Slave ID 255)")
+    print("  python kirim_modbus.py -R COM3 9600 FF 1 0     # Relay 1 OFF (Slave ID 255)")
     sys.exit(1)
+
+# Ambil opsi pertama (hilangkan '-' jika ada)
+option = sys.argv[1].replace('-', '').upper()
+
 
 mode = sys.argv[1]
 
 # Opsi untuk deteksi port serial
-if mode == '-d':
+if option in ['D', 'DETECT']:
     detect_serial_ports()
     sys.exit(0)
 
@@ -312,7 +333,7 @@ if len(sys.argv) < 3:
 port = sys.argv[2]
 
 
-if mode == '-m':
+if option in ['R', 'RELAYCONTROL']: 
     if len(sys.argv) != 7:
         print("❌ Error: Format kontrol relay salah. Contoh:")
         print("  python kirim_modbus.py -m COM3 9600 FF 1 1   # Relay 1 ON")
@@ -330,7 +351,7 @@ if mode == '-m':
         print("❌ Error: Baudrate harus berupa angka.")
         sys.exit(1)
 
-if mode == '-f':
+if option in ['U', 'INPUTSTATUS']:
     if len(sys.argv) != 5:
         print("❌ Error: Format baca relay salah. Contoh: python kirim_modbus.py -b COM3 9600 FF")
         print("          atau: python kirim_modbus.py -b COM3 9600 1")
@@ -345,7 +366,7 @@ if mode == '-f':
         print("❌ Error: Baudrate harus berupa angka.")
         sys.exit(1)
 
-if mode == '-i':
+if option in ['U', 'INPUTSTATUS']:
     if len(sys.argv) != 5:
         print("❌ Error: Format cek input salah. Contoh: python kirim_modbus.py -i COM3 9600 FF")
         print("          atau: python kirim_modbus.py -i COM3 9600 1")
@@ -361,7 +382,7 @@ if mode == '-i':
         sys.exit(1)
 
 # Tambahan untuk opsi -c (cek slave ID)
-if mode == '-c':
+if option in ['C', 'CHECKSLAVE']:
     if len(sys.argv) != 4:
         print("❌ Error: Format cek slave ID salah. Contoh: python kirim_modbus.py -c COM3 9600")
         sys.exit(1)
@@ -373,9 +394,9 @@ if mode == '-c':
         print("❌ Error: Baudrate harus berupa angka.")
         sys.exit(1)
 
-if mode == '-t':
+if option in ['T', 'TESTRELAY']:
     if len(sys.argv) != 7 or sys.argv[5] != '-b' or sys.argv[6] not in ['4', '8']:
-        print("❌ Error: Format test relay salah. Contoh: python kirim_modbus.py -t COM3 9600 0F -b 8")
+        print("❌ Error: Format test relay salah. Contoh: python kirim_modbus.py -T COM3 9600 0F -b 8")
         sys.exit(1)
     try:
         baudrate = int(sys.argv[3])
@@ -387,7 +408,7 @@ if mode == '-t':
         print("❌ Error: Baudrate atau bit_mode tidak valid.")
         sys.exit(1)
 
-if mode == '-s':
+if option in ['S', 'SETSLAVE']:
     if len(sys.argv) != 5:
         print("❌ Error: Format set slave salah. Contoh: python kirim_modbus.py -s COM3 9600 0F")
         sys.exit(1)
@@ -414,12 +435,12 @@ except ValueError:
     print("❌ Error: Input HEX tidak valid. Gunakan format hex seperti 0F, FF, 1A.")
     sys.exit(1)
 
-# Tambah CRC jika -a
-if mode == '-a':
+# Tambah CRC jika -O
+if option in ['O', 'AUTO']:
     crc = calculate_crc(data)
     data += crc
-elif mode != '-r':
-    print("❌ Error: Mode harus -a (auto CRC), -r (raw/manual CRC), -t (test relay), -c (cek slave ID), -d (deteksi port), atau -s (set slave address), -i (cek GPIO Input), -f (Feedback Relay), -m (Modified Relay per Channel.")
+elif option not in ['M', 'MANUAL']: 
+    print("❌ Error: parameter tidak dikenal ")
     sys.exit(1)
 
 try:
