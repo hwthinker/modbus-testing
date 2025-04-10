@@ -1,6 +1,7 @@
 import sys
 import serial
 import time
+import serial.tools.list_ports  # Import untuk deteksi port serial
 
 def calculate_crc(data):
     crc = 0xFFFF
@@ -17,6 +18,52 @@ def print_bit_status(label, byte_val):
     for i in range(8):
         bit = (byte_val >> i) & 0x01
         print(f"  {label} {i+1}: {'ON' if bit else 'OFF'}")
+
+def detect_serial_ports():
+    """Mendeteksi semua port serial yang tersedia"""
+    ports = list(serial.tools.list_ports.comports())
+    
+    if not ports:
+        print("⚠️ Tidak ada port serial yang terdeteksi.")
+        return
+    
+    print(f"📊 Port Serial yang Terdeteksi: {len(ports)}")
+    print("=" * 50)
+    for i, port in enumerate(ports, 1):
+        print(f"Port #{i}: {port.device}")
+        print(f"  Deskripsi: {port.description}")
+        print(f"  Hardware ID: {port.hwid}")
+        if hasattr(port, 'manufacturer') and port.manufacturer:
+            print(f"  Manufacturer: {port.manufacturer}")
+        print("-" * 50)
+    
+    print("💡 Gunakan salah satu port di atas untuk komunikasi Modbus")
+
+def check_slave_id(port, baudrate):
+    # Perintah untuk mengecek Slave ID: 00 03 00 00 00 01 + CRC
+    payload = bytearray([0x00, 0x03, 0x00, 0x00, 0x00, 0x01])
+    crc = calculate_crc(payload)
+    payload += crc
+    
+    try:
+        ser = serial.Serial(port, baudrate, timeout=1)
+        ser.write(payload)
+        print(f"[TX] {' '.join(f'{b:02X}' for b in payload)}")
+        response = ser.read(8)
+        ser.close()
+        
+        if response:
+            print(f"[RX] {' '.join(f'{b:02X}' for b in response)}")
+            if len(response) >= 5 and response[1] == 0x03:
+                print(f"Alamat Slave ID: {response[4]} (0x{response[4]:02X})")
+            else:
+                print("⚠️ Format respons tidak valid untuk pengecekan Slave ID")
+        else:
+            print("⚠️ Tidak ada respon dari perangkat.")
+    except serial.SerialException as e:
+        print(f"⚠️ Gagal membuka port {port}: {e}")
+        if "The parameter is incorrect" in str(e):
+            print("💡 Mungkin kamu lupa nulis baudrate atau port salah / sedang dipakai.")
 
 def test_relays(port, baudrate, slave_id, bit_mode):
     ser = serial.Serial(port, baudrate, timeout=1)
@@ -91,10 +138,36 @@ if len(sys.argv) < 2:
     print("  python kirim_modbus.py -a COMx [baudrate] HEX1 HEX2 ...  # auto CRC")
     print("  python kirim_modbus.py -t COMx [baudrate] [slave_id_hex] -b [4/8]  # test relay")
     print("  python kirim_modbus.py -s COMx [baudrate] [slave_id_hex]  # set slave address")
+    print("  python kirim_modbus.py -c COMx [baudrate]  # cek slave ID")
+    print("  python kirim_modbus.py -d  # deteksi port serial yang tersedia")
     sys.exit(1)
 
 mode = sys.argv[1]
+
+# Opsi untuk deteksi port serial
+if mode == '-d':
+    detect_serial_ports()
+    sys.exit(0)
+
+# Untuk semua opsi lain yang membutuhkan parameter port
+if len(sys.argv) < 3:
+    print("❌ Error: Parameter tidak cukup")
+    sys.exit(1)
+
 port = sys.argv[2]
+
+# Tambahan untuk opsi -c (cek slave ID)
+if mode == '-c':
+    if len(sys.argv) != 4:
+        print("❌ Error: Format cek slave ID salah. Contoh: python kirim_modbus.py -c COM3 9600")
+        sys.exit(1)
+    try:
+        baudrate = int(sys.argv[3])
+        check_slave_id(port, baudrate)
+        sys.exit(0)
+    except ValueError:
+        print("❌ Error: Baudrate harus berupa angka.")
+        sys.exit(1)
 
 if mode == '-t':
     if len(sys.argv) != 7 or sys.argv[5] != '-b' or sys.argv[6] not in ['4', '8']:
@@ -142,7 +215,7 @@ if mode == '-a':
     crc = calculate_crc(data)
     data += crc
 elif mode != '-r':
-    print("❌ Error: Mode harus -a (auto CRC), -r (raw/manual CRC), -t (test relay), atau -s (set slave address).")
+    print("❌ Error: Mode harus -a (auto CRC), -r (raw/manual CRC), -t (test relay), -c (cek slave ID), -d (deteksi port), atau -s (set slave address).")
     sys.exit(1)
 
 try:
