@@ -3,6 +3,67 @@ import serial
 import time
 import serial.tools.list_ports  # Import untuk deteksi port serial
 
+def control_relay(port, baudrate, slave_id, channel, state):
+    """Fungsi baru untuk mengontrol relay dengan format sederhana"""
+    try:
+        # Handle slave ID
+        if slave_id.startswith('0x'):
+            slave_id_hex = int(slave_id, 16)
+        elif all(c in '0123456789ABCDEFabcdef' for c in slave_id):
+            slave_id_hex = int(slave_id, 16)
+        else:
+            slave_id_hex = int(slave_id)
+            
+        if not (0 <= slave_id_hex <= 255):
+            raise ValueError("Slave ID harus antara 0-255")
+        
+        # Validasi channel (0-7 untuk relay 1-8)
+        channel_num = int(channel) - 1  # Convert ke 0-based index
+        if not (0 <= channel_num <= 7):
+            raise ValueError("Channel harus antara 1-8")
+            
+        # Validasi state (0 atau 1)
+        state_val = int(state)
+        if state_val not in [0, 1]:
+            raise ValueError("State harus 0 (OFF) atau 1 (ON)")
+            
+    except ValueError as e:
+        print(f"❌ Error: {e}")
+        sys.exit(1)
+
+    # Format payload Modbus (Function Code 0x05)
+    value = 0xFF00 if state_val == 1 else 0x0000
+    payload = bytearray([
+        slave_id_hex, 
+        0x05, 
+        0x00, 
+        channel_num, 
+        (value >> 8) & 0xFF, 
+        value & 0xFF
+    ])
+    crc = calculate_crc(payload)
+    payload += crc
+    
+    try:
+        ser = serial.Serial(port, baudrate, timeout=1)
+        ser.write(payload)
+        print(f"[TX] {' '.join(f'{b:02X}' for b in payload)}")
+        response = ser.read(8)
+        ser.close()
+        
+        if response:
+            print(f"[RX] {' '.join(f'{b:02X}' for b in response)}")
+            if len(response) >= 6 and response[1] == 0x05:
+                print(f"\nRelay {channel_num+1} berhasil di-set ke {'ON 🟢' if state_val else 'OFF 🔴'}")
+            else:
+                print("⚠️ Format respons tidak valid")
+        else:
+            print("⚠️ Tidak ada respon dari perangkat.")
+    except serial.SerialException as e:
+        print(f"⚠️ Gagal membuka port {port}: {e}")
+        if "The parameter is incorrect" in str(e):
+            print("💡 Mungkin port salah atau sedang dipakai.")
+
 def check_relay_status(port, baudrate, slave_id):
     """Fungsi untuk membaca status relay dengan format sederhana"""
     try:
@@ -231,6 +292,8 @@ if len(sys.argv) < 2:
     print("  python kirim_modbus.py -s COMx [baudrate] [slave_id_hex]  # set slave address")
     print("  python kirim_modbus.py -c COMx [baudrate]  # cek slave ID_hex")
     print("  python kirim_modbus.py -i COMx [baudrate] [slave_id_hex] # cek Status Input")
+    print("  python kirim_modbus.py -f COMx [baudrate] [slave_id_hex] # Feedbcak Status Relay")
+    print("  python kirim_modbus.py -m COMx [baudrate] [slave_id_hex] [Channel_rly] [0/1] # ON/OFF Relay per channel")
     print("  python kirim_modbus.py -d  # deteksi port serial yang tersedia")
     sys.exit(1)
 
@@ -248,7 +311,26 @@ if len(sys.argv) < 3:
 
 port = sys.argv[2]
 
-if mode == '-b':
+
+if mode == '-m':
+    if len(sys.argv) != 7:
+        print("❌ Error: Format kontrol relay salah. Contoh:")
+        print("  python kirim_modbus.py -m COM3 9600 FF 1 1   # Relay 1 ON")
+        print("  python kirim_modbus.py -m COM3 9600 02 4 0    # Relay 4 OFF")
+        sys.exit(1)
+    try:
+        port = sys.argv[2]
+        baudrate = int(sys.argv[3])
+        slave_id = sys.argv[4]
+        channel = sys.argv[5]
+        state = sys.argv[6]
+        control_relay(port, baudrate, slave_id, channel, state)
+        sys.exit(0)
+    except ValueError:
+        print("❌ Error: Baudrate harus berupa angka.")
+        sys.exit(1)
+
+if mode == '-f':
     if len(sys.argv) != 5:
         print("❌ Error: Format baca relay salah. Contoh: python kirim_modbus.py -b COM3 9600 FF")
         print("          atau: python kirim_modbus.py -b COM3 9600 1")
@@ -337,7 +419,7 @@ if mode == '-a':
     crc = calculate_crc(data)
     data += crc
 elif mode != '-r':
-    print("❌ Error: Mode harus -a (auto CRC), -r (raw/manual CRC), -t (test relay), -c (cek slave ID), -d (deteksi port), atau -s (set slave address).")
+    print("❌ Error: Mode harus -a (auto CRC), -r (raw/manual CRC), -t (test relay), -c (cek slave ID), -d (deteksi port), atau -s (set slave address), -i (cek GPIO Input), -f (Feedback Relay), -m (Modified Relay per Channel.")
     sys.exit(1)
 
 try:
